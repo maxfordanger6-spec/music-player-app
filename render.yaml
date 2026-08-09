@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: music-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    plan: free
