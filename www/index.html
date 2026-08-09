@@ -188,8 +188,7 @@ let currentIndex = -1;
 let isPlaying = false;
 let renameTarget = null;
 let deleteTarget = null;
-// Change cette URL quand le backend est déployé sur Railway
-const API_BASE = '';  // Laisser vide = backend pas encore configuré
+const API_BASE = 'https://music-player-app-production.up.railway.app';
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -450,11 +449,6 @@ function confirmDelete() {
 async function downloadYouTube() {
   const url = document.getElementById('yt-url').value.trim();
   if (!url) { showToast('Entre un lien YouTube'); return; }
-  
-  if (!API_BASE) {
-    showToast('Backend non configuré. Déploie le serveur d\'abord.');
-    return;
-  }
   
   const status = document.getElementById('download-status');
   const btn = document.getElementById('btn-download');
