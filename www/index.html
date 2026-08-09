@@ -126,9 +126,11 @@ header h1{font-size:22px;font-weight:700;background:linear-gradient(135deg,var(-
     <!-- Library tab -->
     <div id="tab-library">
       <div style="display:flex;gap:8px;margin-bottom:12px">
-        <button id="btn-add-files" style="flex:1;padding:10px;background:var(--surface);border:2px dashed var(--surface2);border-radius:var(--radius);color:var(--text2);font-size:13px;cursor:pointer;transition:.2s">➕ Ajouter des fichiers</button>
+        <button id="btn-add-files" style="flex:1;padding:10px;background:var(--surface);border:2px dashed var(--surface2);border-radius:var(--radius);color:var(--text2);font-size:13px;cursor:pointer;transition:.2s">➕ Fichiers</button>
         <button id="btn-add-folder" style="flex:1;padding:10px;background:var(--surface);border:2px dashed var(--surface2);border-radius:var(--radius);color:var(--text2);font-size:13px;cursor:pointer;transition:.2s">📂 Dossier</button>
+        <button id="btn-scan" style="flex:1;padding:10px;background:var(--surface);border:2px dashed var(--surface2);border-radius:var(--radius);color:var(--text2);font-size:13px;cursor:pointer;transition:.2s">🔍 Scanner</button>
       </div>
+      <div id="scan-progress" style="display:none;padding:8px 12px;background:var(--surface);border-radius:var(--radius);margin-bottom:12px;font-size:12px;color:var(--text2)"></div>
       <div id="track-list"></div>
       <div id="empty-library" class="empty-state">
         <div class="icon">🎶</div>
@@ -152,6 +154,7 @@ header h1{font-size:22px;font-weight:700;background:linear-gradient(135deg,var(-
   </div>
 
   <input type="file" id="file-input" accept="audio/*" multiple>
+  <input type="file" id="folder-input" webkitdirectory directory multiple accept="audio/*" style="display:none">
 </div>
 
 <!-- Rename Modal -->
@@ -226,12 +229,27 @@ function savePlaylist() {
 }
 
 // ===== FILE LOADING =====
+let scanAborted = false;
+
 function initButtons() {
   document.getElementById('btn-add-files').addEventListener('click', () => {
     document.getElementById('file-input').click();
   });
+  document.getElementById('btn-add-folder').addEventListener('click', () => {
+    document.getElementById('folder-input').click();
+  });
   document.getElementById('file-input').addEventListener('change', handleFiles);
+  document.getElementById('folder-input').addEventListener('change', handleFiles);
   document.getElementById('btn-download').addEventListener('click', downloadYouTube);
+  document.getElementById('btn-scan').addEventListener('click', function() {
+    if (this.textContent === '⏳ Scan...') {
+      scanAborted = true;
+      this.textContent = '🔍 Scanner';
+      this.style.pointerEvents = 'auto';
+      return;
+    }
+    scanDevice();
+  });
   document.getElementById('yt-url').addEventListener('keydown', e => {
     if (e.key === 'Enter') downloadYouTube();
   });
@@ -265,6 +283,108 @@ function handleFiles(e) {
   renderTrackList();
   e.target.value = '';
   showToast(`${files.length} fichier(s) ajouté(s)`);
+}
+
+// ===== SCAN DEVICE =====
+async function scanDevice() {
+  const progress = document.getElementById('scan-progress');
+  const btn = document.getElementById('btn-scan');
+  scanAborted = false;
+  
+  btn.textContent = '⏳ Scan...';
+  btn.style.pointerEvents = 'none';
+  progress.style.display = 'block';
+  progress.textContent = '🔍 Recherche des fichiers audio...';
+  
+  const audioExts = /\.(mp3|wav|ogg|flac|m4a|aac|wma|opus)$/i;
+  let found = 0;
+  
+  // Common Android music directories
+  const dirs = [
+    '/storage/emulated/0/Music',
+    '/storage/emulated/0/Download',
+    '/storage/emulated/0/Downloads', 
+    '/storage/emulated/0/Audio',
+    '/storage/emulated/0/Media',
+    '/storage/emulated/0/Recordings',
+    '/storage/emulated/0/WhatsApp/Media',
+    '/storage/emulated/0/Telegram',
+    '/storage/emulated/0/DCIM',
+    '/sdcard/Music',
+    '/sdcard/Download',
+    '/sdcard/Downloads',
+  ];
+  
+  try {
+    // Try Capacitor Filesystem plugin
+    const { Filesystem, Directory } = window.Capacitor?.Plugins?.Filesystem || {};
+    
+    for (const dir of dirs) {
+      if (scanAborted) break;
+      try {
+        progress.textContent = `🔍 Scan : ${dir.split('/').pop()}...`;
+        const result = await Filesystem.readdir({
+          path: dir,
+          directory: Directory.External,
+        });
+        
+        if (result.files) {
+          for (const f of result.files) {
+            if (scanAborted) break;
+            if (f.name && audioExts.test(f.name)) {
+              const filePath = dir + '/' + f.name;
+              // Check if already in playlist
+              if (!playlist.find(t => t.name === f.name)) {
+                playlist.push({
+                  name: f.name,
+                  url: 'file://' + filePath,
+                  path: filePath,
+                  size: f.size || 0,
+                  added: Date.now()
+                });
+                found++;
+                if (found % 5 === 0) {
+                  progress.textContent = `🔍 ${found} fichiers trouvés...`;
+                }
+              }
+            }
+          }
+        }
+      } catch(e) {
+        // Directory doesn't exist or no access — skip
+      }
+      
+      // Yield to UI
+      await new Promise(r => setTimeout(r, 50));
+    }
+    
+    // Fallback: try MediaStore-like approach via file input
+    if (found === 0 && !scanAborted) {
+      progress.textContent = '💡 Scan direct limité. Utilise 📂 Dossier pour ouvrir un dossier complet.';
+    }
+    
+  } catch(e) {
+    // Capacitor not available — not in APK
+    progress.textContent = '💡 Ouvre un dossier manuellement avec 📂 Dossier';
+  }
+  
+  if (scanAborted) {
+    progress.textContent = '⏹️ Scan annulé.';
+  } else if (found > 0) {
+    savePlaylist();
+    renderTrackList();
+    progress.textContent = `✅ ${found} fichier(s) audio trouvé(s) !`;
+    showToast(`${found} pistes ajoutées`);
+  }
+  
+  btn.textContent = '🔍 Scanner';
+  btn.style.pointerEvents = 'auto';
+  
+  setTimeout(() => {
+    if (progress.textContent.includes('✅') || progress.textContent.includes('💡')) {
+      progress.style.display = 'none';
+    }
+  }, 4000);
 }
 
 // ===== RENDER =====
