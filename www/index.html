@@ -188,7 +188,7 @@ let currentIndex = -1;
 let isPlaying = false;
 let renameTarget = null;
 let deleteTarget = null;
-const API_BASE = 'https://music-api-production.up.railway.app';
+const API_BASE = 'https://api-production-dc157.up.railway.app';
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -459,7 +459,7 @@ async function downloadYouTube() {
   status.style.display = 'block';
   
   try {
-    const resp = await fetch(API_BASE + '/api/download', {
+    const resp = await fetch(API_BASE + '/api/youtube/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
