@@ -1,0 +1,9 @@
+{
+  "appId": "com.nonamesbeats.musicplayer",
+  "appName": "Music Player",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

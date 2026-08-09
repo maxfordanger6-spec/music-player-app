@@ -1,0 +1,11 @@
+node_modules/
+android/app/build/
+android/.gradle/
+android/build/
+android/captures/
+*.apk
+*.aab
+__pycache__/
+*.pyc
+/tmp/
+.env
