@@ -41,6 +41,8 @@ async def download_audio(req: DownloadRequest):
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
         'outtmpl': output_template,
         'quiet': True, 'no_warnings': True, 'extract_flat': False,
+        'extractor_args': {'youtube': {'player_client': ['android']}},
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36'},
     }
     
     try:
