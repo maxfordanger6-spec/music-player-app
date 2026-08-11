@@ -579,7 +579,7 @@ async function downloadYouTube() {
   status.style.display = 'block';
   
   try {
-    const resp = await fetch(API_BASE + '/api/youtube/download', {
+    const resp = await fetch(API_BASE + '/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
