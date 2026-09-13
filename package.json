@@ -11,7 +11,7 @@
   "dependencies": {
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
-    "@capacitor/filesystem": "^6.0.0"
+    "@capacitor/filesystem": "^6.0.4"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.8"

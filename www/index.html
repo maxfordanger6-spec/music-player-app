@@ -219,7 +219,12 @@ function initTabs() {
 function loadPlaylist() {
   try {
     const saved = localStorage.getItem('music_playlist');
-    if (saved) playlist = JSON.parse(saved);
+    if (saved) {
+      const raw = JSON.parse(saved);
+      // blob: URLs die on restart — drop them so dead tracks don't linger.
+      playlist = raw.filter(t => !(t.url && t.url.startsWith('blob:')));
+      if (playlist.length !== raw.length) savePlaylist();
+    }
   } catch(e) { playlist = []; }
   renderTrackList();
 }
@@ -261,28 +266,41 @@ function handleFiles(e) {
     showToast('Aucun fichier audio détecté');
     return;
   }
-  
-  files.forEach(file => {
-    const url = URL.createObjectURL(file);
-    const exists = playlist.find(t => t.name === file.name);
-    if (exists) {
-      exists.url = url;
-      exists.blob = file;
-    } else {
-      playlist.push({
-        name: file.name,
-        url: url,
-        blob: file,
-        size: file.size,
-        added: Date.now()
-      });
+
+  const FS = window.Capacitor?.Plugins?.Filesystem;
+  files.forEach(async (file) => {
+    try {
+      let entry = null;
+      if (FS) {
+        // Persist in app storage: blob URLs die on app restart.
+        const dataUrl = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = rej;
+          fr.readAsDataURL(file);
+        });
+        const base64 = String(dataUrl).split(',')[1];
+        const path = 'music/' + file.name.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+        await FS.writeFile({ path, data: base64, directory: 'DATA', recursive: true });
+        entry = { name: file.name, path, size: file.size, added: Date.now() };
+      } else {
+        entry = { name: file.name, url: URL.createObjectURL(file), blob: file, size: file.size, added: Date.now() };
+      }
+      const exists = playlist.find(t => t.name === entry.name);
+      if (exists) {
+        Object.assign(exists, entry);
+      } else {
+        playlist.push(entry);
+      }
+      savePlaylist();
+      renderTrackList();
+    } catch (err) {
+      showToast('Erreur ajout : ' + (err.message || err));
     }
   });
-  
-  savePlaylist();
-  renderTrackList();
+
   e.target.value = '';
-  showToast(`${files.length} fichier(s) ajouté(s)`);
+  showToast(`${files.length} fichier(s) en cours d'ajout…`);
 }
 
 // ===== SCAN DEVICE =====
@@ -316,8 +334,9 @@ async function scanDevice() {
   ];
   
   try {
-    // Try Capacitor Filesystem plugin
-    const { Filesystem, Directory } = window.Capacitor?.Plugins?.Filesystem || {};
+    // Capacitor Filesystem plugin (raw string enums — Directory.* is NOT
+    // exposed on the plugin proxy).
+    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
     
     for (const dir of dirs) {
       if (scanAborted) break;
@@ -325,26 +344,33 @@ async function scanDevice() {
         progress.textContent = `🔍 Scan : ${dir.split('/').pop()}...`;
         const result = await Filesystem.readdir({
           path: dir,
-          directory: Directory.External,
+          directory: 'EXTERNAL',
         });
         
         if (result.files) {
           for (const f of result.files) {
             if (scanAborted) break;
             if (f.name && audioExts.test(f.name)) {
+              // Copy into app storage: the WebView cannot play file:// or
+              // external paths, only files inside the app sandbox.
               const filePath = dir + '/' + f.name;
-              // Check if already in playlist
               if (!playlist.find(t => t.name === f.name)) {
-                playlist.push({
-                  name: f.name,
-                  url: 'file://' + filePath,
-                  path: filePath,
-                  size: f.size || 0,
-                  added: Date.now()
-                });
-                found++;
-                if (found % 5 === 0) {
-                  progress.textContent = `🔍 ${found} fichiers trouvés...`;
+                try {
+                  const data = await Filesystem.readFile({ path: filePath, directory: 'EXTERNAL' });
+                  const safe = 'music/' + f.name.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+                  await Filesystem.writeFile({ path: safe, data: data.data, directory: 'DATA', recursive: true });
+                  playlist.push({
+                    name: f.name,
+                    path: safe,
+                    size: f.size || 0,
+                    added: Date.now()
+                  });
+                  found++;
+                  if (found % 5 === 0) {
+                    progress.textContent = `🔍 ${found} fichiers trouvés...`;
+                  }
+                } catch (e2) {
+                  // unreadable file — skip
                 }
               }
             }
@@ -437,7 +463,11 @@ function playTrack(index) {
   if (index < 0 || index >= playlist.length) return;
   currentIndex = index;
   const track = playlist[index];
-  audio.src = track.url;
+  if (track.path && window.Capacitor?.convertFileSrc) {
+    audio.src = window.Capacitor.convertFileSrc(track.path);
+  } else {
+    audio.src = track.url;
+  }
   audio.play().catch(() => showToast('Impossible de lire ce fichier'));
   document.getElementById('current-title').textContent = track.name.replace(/\.[^.]+$/, '');
   document.getElementById('current-artist').textContent = formatSize(track.size);
@@ -506,12 +536,15 @@ function confirmRename() {
   const ext = oldTrack.name.split('.').pop();
   if (!newName.endsWith('.' + ext)) newName += '.' + ext;
   
-  // Try to rename the actual file if it's a blob/file
-  if (oldTrack.blob && oldTrack.blob instanceof File) {
-    // Can't rename File objects, but we rename the display name
+  // Rename the actual file in app storage.
+  const FS = window.Capacitor?.Plugins?.Filesystem;
+  if (oldTrack.path && FS) {
+    const newPath = 'music/' + newName.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+    FS.rename({ from: oldTrack.path, to: newPath, directory: 'DATA' })
+      .then(() => { playlist[renameTarget].path = newPath; savePlaylist(); })
+      .catch(() => {});
   }
   
-  const oldUrl = oldTrack.url;
   playlist[renameTarget].name = newName;
   
   // Update current playing info
@@ -553,9 +586,14 @@ function confirmDelete() {
     currentIndex--;
   }
   
-  // Revoke blob URL
-  if (playlist[deleteTarget].url && playlist[deleteTarget].url.startsWith('blob:')) {
-    URL.revokeObjectURL(playlist[deleteTarget].url);
+  // Delete the stored file + revoke blob URL
+  const entry = playlist[deleteTarget];
+  const FS = window.Capacitor?.Plugins?.Filesystem;
+  if (entry.path && FS) {
+    FS.deleteFile({ path: entry.path, directory: 'DATA' }).catch(() => {});
+  }
+  if (entry.url && entry.url.startsWith('blob:')) {
+    URL.revokeObjectURL(entry.url);
   }
   
   playlist.splice(deleteTarget, 1);
@@ -604,15 +642,28 @@ async function downloadYouTube() {
       if (match) filename = decodeURIComponent(match[1]);
     }
     
-    // Add to playlist
-    const url2 = URL.createObjectURL(blob);
-    playlist.push({
-      name: filename,
-      url: url2,
-      blob: new File([blob], filename, { type: 'audio/mpeg' }),
-      size: blob.size,
-      added: Date.now()
-    });
+    // Add to playlist — persist in app storage when native.
+    const FS = window.Capacitor?.Plugins?.Filesystem;
+    if (FS) {
+      const dataUrl = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = rej;
+        fr.readAsDataURL(blob);
+      });
+      const safe = 'music/' + filename.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+      await FS.writeFile({ path: safe, data: String(dataUrl).split(',')[1], directory: 'DATA', recursive: true });
+      playlist.push({ name: filename, path: safe, size: blob.size, added: Date.now() });
+    } else {
+      const url2 = URL.createObjectURL(blob);
+      playlist.push({
+        name: filename,
+        url: url2,
+        blob: new File([blob], filename, { type: 'audio/mpeg' }),
+        size: blob.size,
+        added: Date.now()
+      });
+    }
     
     savePlaylist();
     renderTrackList();
